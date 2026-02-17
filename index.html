@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code City Pro – Repository Risk Map</title>
+    <!-- Use main app styles from project root -->
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+        /* Pro-only layout tweaks */
+        .snapshot-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 80px;
+            border: 1px solid #444;
+            z-index: 100;
+            width: 260px;
+            max-height: 50vh;
+            overflow-y: auto;
+            font-size: 11px;
+        }
+
+        .snapshot-panel h3 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 6px;
+        }
+
+        .snapshot-list-item {
+            padding: 6px 4px;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            border: 1px solid transparent;
+        }
+
+        .snapshot-list-item:hover {
+            border-color: #00ffcc;
+            background: rgba(0, 255, 204, 0.06);
+        }
+
+        .snapshot-list-item.active {
+            border-color: #00ffcc;
+            background: rgba(0, 255, 204, 0.15);
+        }
+
+        .snapshot-meta {
+            color: #888;
+            font-size: 10px;
+        }
+
+        .snapshot-label {
+            font-weight: bold;
+            color: #00ffcc;
+            display: block;
+        }
+
+        .repo-panel {
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .snapshot-label-input {
+            margin-top: 6px;
+            width: 100%;
+            padding: 6px;
+            background: #111;
+            border: 1px solid #333;
+            color: #eee;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .snapshot-label-input::placeholder {
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <!-- Snapshot Panel -->
+    <div class="snapshot-panel">
+        <h3>Saved Analyses</h3>
+        <div id="snapshot-list-empty" class="snapshot-meta">No snapshots yet. Run an analysis to create one.</div>
+        <div id="snapshot-list"></div>
+    </div>
+
+    <!-- Repository Input Panel -->
+    <div class="repo-panel">
+        <h3>🏙️ Code City Pro</h3>
+        <div class="repo-input-group">
+            <input type="text" id="repo-input" placeholder="GitHub URL (e.g., https://github.com/user/repo)" class="repo-input">
+            <button id="analyze-btn" class="analyze-button">📊 Analyze</button>
+        </div>
+        <input type="text" id="snapshot-label" class="snapshot-label-input" placeholder="Optional snapshot label (e.g., 'Requests v2.32 main')" />
+        <div class="token-info">
+            ⚠️ For larger orgs, use a GitHub token:<br>
+            <code>set GITHUB_TOKEN=your_token_here</code> (Windows)<br>
+            <code>export GITHUB_TOKEN=your_token_here</code> (Linux/Mac)
+        </div>
+        <div id="status-message" class="status-message"></div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+        <h3>Code Complexity Legend</h3>
+        <div><span class="low-complexity">■</span> 1-5: Simple</div>
+        <div><span class="moderate-complexity">■</span> 6-15: Moderate</div>
+        <div><span class="medium-complexity">■</span> 16-30: Complex</div>
+        <div><span class="high-complexity">■</span> 31-50: Very Complex</div>
+        <div><span class="critical-complexity">■</span> 51+: Highly Complex</div>
+    </div>
+
+    <!-- Statistics Panel -->
+    <div class="stats-panel">
+        <h3>Project Statistics</h3>
+        <div id="stats-content">
+            <div>Total Files: <span id="total-files">0</span></div>
+            <div>Avg Complexity: <span id="avg-complexity">0</span></div>
+            <div>Total Lines: <span id="total-lines">0</span></div>
+            <div>High Risk: <span id="high-risk">0</span></div>
+        </div>
+        <div class="last-updated">
+            <small><strong>Data Files Updated:</strong></small>
+            <div id="file-timestamps"></div>
+        </div>
+        <button id="refresh-btn" class="refresh-button">🔄 Refresh Current Data</button>
+    </div>
+
+    <!-- Search & Filter Panel -->
+    <div class="search-panel">
+        <input type="text" id="search-input" placeholder="Search files..." class="search-input">
+        <div class="filter-buttons">
+            <button id="filter-all" class="filter-btn active">All</button>
+            <button id="filter-low" class="filter-btn">Low</button>
+            <button id="filter-medium" class="filter-btn">Medium</button>
+            <button id="filter-high" class="filter-btn">High</button>
+        </div>
+        <div class="view-buttons">
+            <button id="view-top" class="view-btn">Top</button>
+            <button id="view-front" class="view-btn">Front</button>
+            <button id="view-side" class="view-btn">Side</button>
+            <button id="view-3d" class="view-btn active">3D</button>
+        </div>
+    </div>
+
+    <!-- Sidebar for Building Details -->
+    <div class="sidebar">
+        <h3>Building Details</h3>
+        <div id="details-content">
+            <p style="color: #888;">Click on a building to view details</p>
+        </div>
+    </div>
+
+    <!-- Three.js core (non-module, global THREE namespace) -->
+    <script src="https://unpkg.com/three@0.136.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.136.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/three@0.136.0/examples/js/loaders/FontLoader.js"></script>
+    <script src="https://unpkg.com/three@0.136.0/examples/js/geometries/TextGeometry.js"></script>
+
+    <script>
+    // Basic UI wiring for analyze button and snapshots
+    document.addEventListener('DOMContentLoaded', () => {
+        const statusMsg = document.getElementById('status-message');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const repoInput = document.getElementById('repo-input');
+        const labelInput = document.getElementById('snapshot-label');
+
+        if (analyzeBtn && repoInput && statusMsg) {
+            analyzeBtn.addEventListener('click', async () => {
+                const repoUrl = repoInput.value.trim();
+                const label = labelInput.value.trim();
+                if (!repoUrl) {
+                    statusMsg.textContent = '⚠️ Please enter a repository URL';
+                    statusMsg.style.color = '#ffff00';
+                    return;
+                }
+
+                statusMsg.textContent = '⏳ Analyzing repository...';
+                statusMsg.style.color = '#00ffcc';
+                analyzeBtn.disabled = true;
+
+                try {
+                    const response = await fetch('/api/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ repo_url: repoUrl, label })
+                    });
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        statusMsg.textContent = '✅ Analysis complete. Snapshot saved.';
+                        statusMsg.style.color = '#00ff88';
+                        window.currentSnapshot = result.snapshot;
+                        window.allData = result.data;
+                        createOrUpdateCity();
+                        await loadSnapshots();
+                    } else {
+                        statusMsg.textContent = `❌ Error: ${result.error || 'Unknown error'}`;
+                        statusMsg.style.color = '#ff4444';
+                    }
+                } catch (error) {
+                    statusMsg.textContent = `❌ Error: ${error.message}`;
+                    statusMsg.style.color = '#ff4444';
+                } finally {
+                    analyzeBtn.disabled = false;
+                }
+            });
+        }
+    });
+    </script>
+
+    <!-- Main 3D city logic -->
+    <script>
+    let scene, camera, renderer, controls, allBuildings = [], allData = [];
+    let cityCenter = { x: 0, y: 0 };
+    let selectedBuilding = null;
+    let currentFilter = 'all';
+    let searchTerm = '';
+    let currentSnapshotId = null;
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    async function loadSnapshots() {
+        try {
+            const listEl = document.getElementById('snapshot-list');
+            const emptyEl = document.getElementById('snapshot-list-empty');
+            const res = await fetch('/api/snapshots');
+            const snapshots = await res.json();
+            listEl.innerHTML = '';
+            if (!snapshots.length) {
+                emptyEl.style.display = 'block';
+                return;
+            }
+            emptyEl.style.display = 'none';
+
+            snapshots.forEach(snap => {
+                const div = document.createElement('div');
+                div.className = 'snapshot-list-item';
+                div.dataset.id = snap.id;
+                div.innerHTML = `
+                    <span class="snapshot-label">${snap.label || snap.repo_url}</span>
+                    <div class="snapshot-meta">
+                        ${snap.repo_url}<br>
+                        Files: ${snap.file_count || 0} • Created: ${snap.created_at}
+                    </div>
+                `;
+                div.addEventListener('click', () => loadSnapshot(snap.id));
+                listEl.appendChild(div);
+            });
+        } catch (e) {
+            console.warn('Failed to load snapshots', e);
+        }
+    }
+
+    async function loadSnapshot(id) {
+        try {
+            const res = await fetch(`/api/snapshots/${id}`);
+            const payload = await res.json();
+            if (!res.ok) {
+                console.error('Failed to load snapshot', payload);
+                return;
+            }
+            currentSnapshotId = id;
+            allData = payload.data || [];
+            createOrUpdateCity();
+            highlightActiveSnapshot();
+        } catch (e) {
+            console.error('Error loading snapshot', e);
+        }
+    }
+
+    function highlightActiveSnapshot() {
+        const items = document.querySelectorAll('.snapshot-list-item');
+        items.forEach(item => {
+            if (item.dataset.id === currentSnapshotId) {
+                item.classList.add('active');
+            } else {
+                item.classList.remove('active');
+            }
+        });
+    }
+
+    async function createOrUpdateCity() {
+        if (!scene) {
+            await createCity();
+        } else {
+            createBuildings(window._loadedFont || null);
+            updateStatistics();
+        }
+    }
+
+    async function createCity() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        if (THREE.PCFSoftShadowMap !== undefined) {
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        }
+        document.body.insertBefore(renderer.domElement, document.body.firstChild);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+        // Load initial data from backend if available
+        try {
+            const response = await fetch('/api/data');
+            if (response.ok) {
+                allData = await response.json();
+            }
+        } catch (e) {
+            console.warn('Error fetching initial data', e);
+        }
+
+        // Layout & grid
+        let maxX = 100, maxY = 100;
+        allData.forEach(b => {
+            maxX = Math.max(maxX, b.x + b.w);
+            maxY = Math.max(maxY, b.y + b.d);
+        });
+        cityCenter = { x: maxX / 2, y: maxY / 2 };
+        const gridSize = Math.max(maxX, maxY) * 2;
+        const gridDivisions = Math.ceil(gridSize / 10);
+        const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x444444, 0x222222);
+        scene.add(gridHelper);
+        gridHelper.position.y = -0.01;
+
+        // Lights
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        directionalLight.position.set(100, 150, 100);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        scene.add(directionalLight);
+
+        const ambientLight = new THREE.AmbientLight(0x808080, 0.8);
+        scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0xffffff, 0.5);
+        pointLight.position.set(-100, 100, 100);
+        scene.add(pointLight);
+
+        // Build city (without font first)
+        createBuildings(null);
+        updateStatistics();
+
+        // Camera
+        const citySize = Math.max(maxX, maxY);
+        const cameraDistance = citySize * 1.5;
+        camera.position.set(cameraDistance * 0.6, citySize * 0.9, cameraDistance * 0.9);
+        camera.lookAt(0, 0, 0);
+        controls.minDistance = citySize * 0.2;
+        controls.maxDistance = citySize * 4;
+        controls.update();
+
+        // Events
+        window.addEventListener('click', onBuildingClick, false);
+        window.addEventListener('mousemove', onMouseMove, false);
+        window.addEventListener('resize', onWindowResize, false);
+
+        document.getElementById('refresh-btn').addEventListener('click', refreshData);
+        document.getElementById('search-input').addEventListener('input', onSearch);
+        document.getElementById('filter-all').addEventListener('click', (e) => setFilter('all', e));
+        document.getElementById('filter-low').addEventListener('click', (e) => setFilter('low', e));
+        document.getElementById('filter-medium').addEventListener('click', (e) => setFilter('medium', e));
+        document.getElementById('filter-high').addEventListener('click', (e) => setFilter('high', e));
+
+        const viewDist = citySize * 1.5;
+        const viewHeight = citySize * 0.6;
+        document.getElementById('view-top').addEventListener('click', () => setView(0, viewDist, 0));
+        document.getElementById('view-front').addEventListener('click', () => setView(0, viewHeight, viewDist));
+        document.getElementById('view-side').addEventListener('click', () => setView(viewDist, viewHeight, 0));
+        document.getElementById('view-3d').addEventListener('click', () => setView(viewDist * 0.4, viewHeight, viewDist * 0.8));
+
+        // Load font for labels (optional)
+        const fontLoader = new THREE.FontLoader();
+        fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', (font) => {
+            window._loadedFont = font;
+            createBuildings(font);
+            updateStatistics();
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            allBuildings.forEach(b => {
+                b.text.lookAt(camera.position);
+            });
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        await loadSnapshots();
+    }
+
+    function createBuildings(font) {
+        allBuildings.forEach(b => {
+            scene.remove(b.mesh);
+            scene.remove(b.edges);
+            if (b.text) scene.remove(b.text);
+        });
+        allBuildings = [];
+
+        if (!allData || !allData.length) return;
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        allData.forEach(file => {
+            minX = Math.min(minX, file.x);
+            maxX = Math.max(maxX, file.x + file.w);
+            minY = Math.min(minY, file.y);
+            maxY = Math.max(maxY, file.y + file.d);
+        });
+        cityCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+
+        allData.forEach((file, index) => {
+            const shouldShow = passesFilter(file);
+            const spacing = 0.92;
+            const adjustedW = file.w * spacing;
+            const adjustedD = file.d * spacing;
+
+            const geometry = new THREE.BoxGeometry(adjustedW, file.h, adjustedD);
+            const material = new THREE.MeshPhongMaterial({
+                color: file.color,
+                shininess: 100,
+                specular: 0x444444,
+                emissive: file.color,
+                emissiveIntensity: 0.2
+            });
+            const building = new THREE.Mesh(geometry, material);
+            building.position.x = file.x + (file.w / 2) - cityCenter.x;
+            building.position.z = file.y + (file.d / 2) - cityCenter.y;
+            building.position.y = file.h / 2;
+            building.castShadow = true;
+            building.receiveShadow = true;
+            building.userData = { ...file, index };
+            building.visible = shouldShow;
+            scene.add(building);
+
+            const edgeGeometry = new THREE.EdgesGeometry(geometry);
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
+            const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+            edges.position.copy(building.position);
+            edges.userData = { isEdge: true, parentIndex: index };
+            edges.visible = shouldShow;
+            scene.add(edges);
+
+            let textMesh = new THREE.Object3D();
+            if (font) {
+                const textGeometry = new THREE.TextGeometry(file.name, {
+                    font: font,
+                    size: 1.5,
+                    height: 0.1,
+                });
+                textGeometry.computeBoundingBox();
+                textGeometry.center();
+                const textMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                textMesh = new THREE.Mesh(textGeometry, textMaterial);
+            }
+            textMesh.position.x = building.position.x;
+            textMesh.position.z = building.position.z;
+            textMesh.position.y = building.position.y + (file.h / 2) + 4;
+            textMesh.userData = { isText: true, parentIndex: index };
+            textMesh.visible = shouldShow;
+            scene.add(textMesh);
+
+            allBuildings.push({ mesh: building, edges, text: textMesh, data: file });
+        });
+    }
+
+    function passesFilter(file) {
+        const matchesSearch = file.name.toLowerCase().includes(searchTerm.toLowerCase());
+        if (!matchesSearch) return false;
+        if (currentFilter === 'all') return true;
+        if (currentFilter === 'low') return file.h <= 10;
+        if (currentFilter === 'medium') return file.h > 10 && file.h <= 28;
+        if (currentFilter === 'high') return file.h > 28;
+        return true;
+    }
+
+    function onBuildingClick(event) {
+        if (!renderer) return;
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(scene.children);
+        for (let i = 0; i < intersects.length; i++) {
+            const obj = intersects[i].object;
+            if (obj.userData.isEdge || obj.userData.isText) continue;
+            if (obj.geometry && obj.geometry instanceof THREE.BoxGeometry) {
+                selectedBuilding = obj.userData;
+                showBuildingDetails(obj.userData);
+                highlightBuilding(obj.userData.index);
+                break;
+            }
+        }
+    }
+
+    function showBuildingDetails(data) {
+        const linesOfCode = data.size || 0;
+        const html = `
+            <div style="color: #fff;">
+                <strong style="color: ${data.color}">${data.name}</strong>
+                <div style="margin-top: 12px; font-size: 12px;">
+                    <div>📊 Complexity: <strong>${(data.h / 2).toFixed(1)}</strong></div>
+                    <div>📝 Lines of Code: <strong>${linesOfCode}</strong></div>
+                    <div>📦 Width: <strong>${data.w.toFixed(1)}m</strong></div>
+                    <div>📏 Depth: <strong>${data.d.toFixed(1)}m</strong></div>
+                    <div>📈 Height: <strong>${data.h.toFixed(1)}m</strong></div>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;">
+                        <div>Health: <span style="color: ${data.color}">●</span></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.getElementById('details-content').innerHTML = html;
+    }
+
+    function highlightBuilding(index) {
+        allBuildings.forEach((b, i) => {
+            b.mesh.material.emissiveIntensity = (i === index) ? 0.5 : 0.2;
+        });
+    }
+
+    function updateStatistics() {
+        const validData = allData.filter(d => passesFilter(d));
+        const totalFiles = validData.length;
+        let avgComplexity = 0;
+        let totalLines = 0;
+        let highRisk = 0;
+        if (totalFiles > 0) {
+            avgComplexity = (validData.reduce((sum, f) => sum + f.h / 2, 0) / totalFiles).toFixed(1);
+            totalLines = validData.reduce((sum, f) => sum + (f.size || 0), 0);
+            highRisk = validData.filter(f => f.h > 28).length;
+        }
+        document.getElementById('total-files').textContent = totalFiles;
+        document.getElementById('avg-complexity').textContent = avgComplexity;
+        document.getElementById('total-lines').textContent = totalLines;
+        document.getElementById('high-risk').textContent = highRisk;
+    }
+
+    function onMouseMove(event) {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }
+
+    function onWindowResize() {
+        if (!camera || !renderer) return;
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function setFilter(filter, evt) {
+        currentFilter = filter;
+        document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        if (evt && evt.target) evt.target.classList.add('active');
+        allBuildings.forEach(b => {
+            const visible = passesFilter(b.data);
+            b.mesh.visible = visible;
+            b.edges.visible = visible;
+            b.text.visible = visible;
+        });
+        updateStatistics();
+    }
+
+    function onSearch(event) {
+        searchTerm = event.target.value;
+        allBuildings.forEach(b => {
+            const visible = passesFilter(b.data);
+            b.mesh.visible = visible;
+            b.edges.visible = visible;
+            b.text.visible = visible;
+        });
+        updateStatistics();
+    }
+
+    function setView(x, y, z) {
+        if (!camera || !controls) return;
+        camera.position.set(x, y, z);
+        controls.target.set(0, 0, 0);
+        controls.update();
+    }
+
+    async function refreshData() {
+        console.log('Refreshing current data...');
+        const response = await fetch('/api/data?t=' + Date.now());
+        allData = await response.json();
+        createBuildings(window._loadedFont || null);
+        updateStatistics();
+    }
+
+    // Bootstrapping
+    (async () => {
+        await createCity();
+    })().catch(e => console.error('Error initializing city', e));
+    </script>
+</body>
+</html>
+
