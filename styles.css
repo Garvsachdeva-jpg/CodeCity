@@ -17,7 +17,9 @@ canvas {
 
 /* Legend */
 .legend {
-    position: relative;
+    position: absolute;
+    top: 10px;
+    left: 10px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 15px;
@@ -60,35 +62,20 @@ canvas {
 }
 
 /* Repository Panel */
-@media (max-width: 768px) {
-    .legend, .stats-panel, .search-panel, .sidebar {
-        position: relative;
-        width: 90%;
-        left: 5%;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        margin-bottom: 10px;
-        transform: none;
-        min-width: unset;
-    }
-
-    .repo-panel {
-        position: relative;
-        width: 90%;
-        left: 5%;
-        top: 0;
-        transform: translateX(0);
-        margin-bottom: 10px;
-    }
-
-    body {
-        overflow: auto;
-    }
-
-    canvas {
-        display: none;
-    }
+.repo-panel {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: 2px solid #00ffcc;
+    z-index: 100;
+    min-width: 400px;
+    pointer-events: auto;
+    box-shadow: 0 0 20px rgba(0, 255, 204, 0.3);
 }
 
 .repo-panel h3 {
@@ -181,7 +168,9 @@ canvas {
 
 /* Statistics Panel */
 .stats-panel {
-    position: relative;
+    position: absolute;
+    top: 10px;
+    right: 10px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 15px;
@@ -272,7 +261,9 @@ canvas {
 
 /* Search Panel */
 .search-panel {
-    position: relative;
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
     background: rgba(0, 0, 0, 0.8);
     padding: 15px;
     border-radius: 8px;
@@ -339,7 +330,9 @@ canvas {
 
 /* Sidebar */
 .sidebar {
-    position: relative;
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 15px;
