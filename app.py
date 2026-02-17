@@ -10,15 +10,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
-# Serve static assets (like styles.css) from the parent CodeCity folder
-PARENT_DIR = os.path.dirname(BASE_DIR)
-app = Flask(__name__, static_folder=PARENT_DIR, static_url_path='')
+app = Flask(__name__, static_folder='.', static_url_path='')
 
 
 @app.route('/')
 def index():
     """Serve the Pro UI."""
     return send_file('index.html')
+
 
 
 @app.route('/api/analyze', methods=['POST'])
