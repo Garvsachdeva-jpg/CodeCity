@@ -151,6 +151,51 @@ def get_snapshot(snapshot_id):
     return jsonify(payload)
 
 
+@app.route('/api/diff', methods=['GET'])
+def diff_snapshots():
+    """Compare two snapshots and return the delta."""
+    snap1_id = request.args.get('snap1')
+    snap2_id = request.args.get('snap2')
+
+    if not snap1_id or not snap2_id:
+        return jsonify({'error': 'Two snapshot IDs are required'}), 400
+
+    path1 = os.path.join(SNAPSHOT_DIR, f"{snap1_id}.json")
+    path2 = os.path.join(SNAPSHOT_DIR, f"{snap2_id}.json")
+
+    if not os.path.exists(path1) or not os.path.exists(path2):
+        return jsonify({'error': 'One or both snapshots not found'}), 404
+
+    with open(path1, 'r') as f:
+        data1 = json.load(f)['data']
+    with open(path2, 'r') as f:
+        data2 = json.load(f)['data']
+
+    files1 = {f['name']: f for f in data1}
+    files2 = {f['name']: f for f in data2}
+
+    added = [f for name, f in files2.items() if name not in files1]
+    removed = [f for name, f in files1.items() if name not in files2]
+    
+    modified = []
+    for name, f2 in files2.items():
+        if name in files1:
+            f1 = files1[name]
+            if f1['h'] != f2['h'] or f1['size'] != f2['size']:
+                modified.append({
+                    'name': name,
+                    'complexity_change': f2['h'] - f1['h'],
+                    'size_change': f2['size'] - f1['size'],
+                    'new_data': f2,
+                })
+
+    return jsonify({
+        'added': added,
+        'removed': removed,
+        'modified': modified,
+    })
+
+
 if __name__ == '__main__':
     print("Code City Pro starting...")
     print("Visit: http://localhost:5100")

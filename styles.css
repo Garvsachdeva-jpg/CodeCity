@@ -4,6 +4,30 @@
     box-sizing: border-box;
 }
 
+.collapsible-panel h3 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.collapse-btn {
+    background: #333;
+    border: 1px solid #555;
+    color: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 20px;
+    height: 20px;
+    line-height: 18px;
+    text-align: center;
+    padding: 0;
+}
+
+.collapsible-content.collapsed {
+    display: none;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: #0a0a0a;
@@ -382,4 +406,25 @@ canvas {
 
 .sidebar::-webkit-scrollbar-thumb:hover {
     background: #00ddaa;
+}
+
+.github-button {
+    display: block;
+    width: 100%;
+    padding: 8px;
+    margin-top: 12px;
+    background: #2b3137;
+    border: 1px solid #444;
+    color: #fff;
+    text-align: center;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
+.github-button:hover {
+    background: #3c4146;
+    border-color: #666;
 }
