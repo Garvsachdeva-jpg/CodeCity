@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify, send_file
 import json
-import subprocess
 import os
 import sys
 from datetime import datetime
+
+from src import scan_pipeline
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,6 +12,12 @@ SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder='.', static_url_path='')
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Simple health check endpoint."""
+    return jsonify({"status": "ok"}), 200
 
 
 @app.route('/')
@@ -45,36 +52,7 @@ def analyze():
     print(f"[PRO] Received repo URL: {repo_url}", file=sys.stderr)
 
     try:
-        cwd = BASE_DIR
-        cmd = [sys.executable, 'scanner2.py', repo_url]
-        if github_token:
-            cmd.append(github_token)
-        print(f"[PRO] Running command: {' '.join(cmd)} in {cwd}", file=sys.stderr)
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=cwd,
-        )
-
-        print(f"[PRO] Exit code: {result.returncode}", file=sys.stderr)
-        print(f"[PRO] STDOUT:\n{result.stdout}", file=sys.stderr)
-        print(f"[PRO] STDERR:\n{result.stderr}", file=sys.stderr)
-
-        if result.returncode != 0:
-            error_msg = result.stderr if result.stderr else result.stdout
-            return jsonify({'error': f'Analysis failed: {error_msg}'}), 400
-
-        data_file = os.path.join(cwd, 'city_data2.json')
-        if not os.path.exists(data_file):
-            return jsonify({'error': 'No data generated - check if repository has Python files'}), 400
-
-        with open(data_file, 'r') as f:
-            city_data = json.load(f)
-
-        # Create a snapshot record
+        # Create a snapshot record (metadata first so it can be reused by downstream pipelines)
         timestamp = datetime.utcnow().strftime('%Y%m%d-%H%M%S')
         snapshot_id = f"{timestamp}"
         snapshot_meta = {
@@ -82,8 +60,18 @@ def analyze():
             "created_at": timestamp,
             "repo_url": repo_url,
             "label": label or repo_url,
-            "file_count": len(city_data),
+            # file_count will be filled after analysis
+            "file_count": 0,
         }
+
+        # Run the scanner + feature engineering + SQLite storage pipeline
+        city_data = scan_pipeline.analyze_and_store(
+            repo_url=repo_url,
+            label=label,
+            snapshot_meta=snapshot_meta,
+            github_token=github_token or None,
+        )
+        snapshot_meta["file_count"] = len(city_data)
 
         snapshot_path = os.path.join(SNAPSHOT_DIR, f"{snapshot_id}.json")
         with open(snapshot_path, 'w') as f:
@@ -95,11 +83,9 @@ def analyze():
             'success': True,
             'data': city_data,
             'snapshot': snapshot_meta,
-            'message': result.stdout,
+            'message': "Analysis complete",
         })
 
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Analysis timed out (> 300 seconds). Repository may be too large.'}), 408
     except Exception as e:
         print(f"[PRO] Exception: {str(e)}", file=sys.stderr)
         return jsonify({'error': str(e)}), 500
@@ -149,6 +135,31 @@ def get_snapshot(snapshot_id):
     with open(path, 'r') as f:
         payload = json.load(f)
     return jsonify(payload)
+
+
+@app.route('/api/snapshots/<snapshot_id>/risk', methods=['GET'])
+def get_snapshot_risk(snapshot_id):
+    """
+    Return files and their risk/anomaly scores for a snapshot,
+    sorted by risk descending.
+    """
+    path = os.path.join(SNAPSHOT_DIR, f"{snapshot_id}.json")
+    if not os.path.exists(path):
+        return jsonify({'error': 'Snapshot not found'}), 404
+    with open(path, 'r') as f:
+        payload = json.load(f)
+    data = payload.get('data', [])
+    enriched = []
+    for rec in data:
+        enriched.append({
+            "name": rec.get("name"),
+            "size": rec.get("size"),
+            "h": rec.get("h"),
+            "risk_score": rec.get("risk_score", 0.0),
+            "anomaly_score": rec.get("anomaly_score", 0.0),
+        })
+    enriched.sort(key=lambda r: r.get("risk_score", 0.0), reverse=True)
+    return jsonify(enriched)
 
 
 @app.route('/api/diff', methods=['GET'])

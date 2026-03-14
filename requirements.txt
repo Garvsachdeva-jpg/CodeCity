@@ -3,3 +3,6 @@ gunicorn
 lizard
 requests
 squarify
+pandas
+scikit-learn
+joblib

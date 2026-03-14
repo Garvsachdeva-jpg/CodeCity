@@ -144,7 +144,9 @@
                 <div>Total Files: <span id="total-files">0</span></div>
                 <div>Avg Complexity: <span id="avg-complexity">0</span></div>
                 <div>Total Lines: <span id="total-lines">0</span></div>
-                <div>High Risk: <span id="high-risk">0</span></div>
+                <div>High Complexity Files: <span id="high-risk">0</span></div>
+                <div>Avg Risk Score: <span id="avg-risk-score">0</span></div>
+                <div>Avg Anomaly Score: <span id="avg-anomaly-score">0</span></div>
             </div>
             <div class="last-updated">
                 <small><strong>Data Files Updated:</strong></small>
@@ -181,6 +183,30 @@
         <h3>Building Details<button class="collapse-btn">-</button></h3>
         <div id="details-content" class="collapsible-content">
             <p style="color: #888;">Click on a building to view details</p>
+        </div>
+    </div>
+
+    <!-- Risk insights panel -->
+    <div class="risk-panel collapsible-panel">
+        <h3>Risk Insights<button class="collapse-btn">-</button></h3>
+        <div class="collapsible-content">
+            <div style="font-size: 11px; color: #aaa; margin-bottom: 6px;">
+                Top files by ML-estimated risk score.
+            </div>
+            <table class="risk-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>File</th>
+                        <th>Risk</th>
+                        <th>Anomaly</th>
+                        <th>Complexity</th>
+                    </tr>
+                </thead>
+                <tbody id="risk-table-body">
+                    <tr><td colspan="5" style="color:#777;">Run an analysis to see risk insights.</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -587,6 +613,8 @@
         const linesOfCode = data.size || 0;
         const complexity = data.h / 2;
         const healthStatus = getHealthStatus(complexity);
+        const riskScore = (data.risk_score || 0).toFixed(3);
+        const anomalyScore = (data.anomaly_score || 0).toFixed(3);
         let githubButton = '';
         
         // Handle both snapshot structures (from analysis vs. from loading)
@@ -606,6 +634,8 @@
                     <div>📦 Width: <strong>${data.w.toFixed(1)}m</strong></div>
                     <div>📏 Depth: <strong>${data.d.toFixed(1)}m</strong></div>
                     <div>📈 Height: <strong>${data.h.toFixed(1)}m</strong></div>
+                    <div>⚠️ Risk Score: <strong>${riskScore}</strong></div>
+                    <div>🧪 Anomaly Score: <strong>${anomalyScore}</strong></div>
                     <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;">
                         <div>Health: <span style="color: ${data.color}">●</span> ${healthStatus}</div>
                     </div>
@@ -627,16 +657,53 @@
         const totalFiles = validData.length;
         let avgComplexity = 0;
         let totalLines = 0;
-        let highRisk = 0;
+        let highComplexityCount = 0;
+        let avgRiskScore = 0;
+        let avgAnomalyScore = 0;
+
         if (totalFiles > 0) {
             avgComplexity = (validData.reduce((sum, f) => sum + f.h / 2, 0) / totalFiles).toFixed(1);
             totalLines = validData.reduce((sum, f) => sum + (f.size || 0), 0);
-            highRisk = validData.filter(f => f.h > 28).length;
+            highComplexityCount = validData.filter(f => f.h > 28).length;
+
+            const totalRisk = validData.reduce((sum, f) => sum + (f.risk_score || 0), 0);
+            const totalAnomaly = validData.reduce((sum, f) => sum + (f.anomaly_score || 0), 0);
+            avgRiskScore = (totalRisk / totalFiles).toFixed(3);
+            avgAnomalyScore = (totalAnomaly / totalFiles).toFixed(3);
         }
         document.getElementById('total-files').textContent = totalFiles;
         document.getElementById('avg-complexity').textContent = avgComplexity;
         document.getElementById('total-lines').textContent = totalLines;
-        document.getElementById('high-risk').textContent = highRisk;
+        document.getElementById('high-risk').textContent = highComplexityCount;
+        document.getElementById('avg-risk-score').textContent = avgRiskScore;
+        document.getElementById('avg-anomaly-score').textContent = avgAnomalyScore;
+
+        updateRiskTable(validData);
+    }
+
+    function updateRiskTable(files) {
+        const tbody = document.getElementById('risk-table-body');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!files.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#777;">No data available.</td></tr>';
+            return;
+        }
+        const sorted = [...files].sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0)).slice(0, 10);
+        sorted.forEach((f, idx) => {
+            const risk = (f.risk_score || 0).toFixed(3);
+            const anomaly = (f.anomaly_score || 0).toFixed(3);
+            const complexity = (f.h / 2).toFixed(1);
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${idx + 1}</td>
+                <td title="${f.name}">${f.name}</td>
+                <td>${risk}</td>
+                <td>${anomaly}</td>
+                <td>${complexity}</td>
+            `;
+            tbody.appendChild(tr);
+        });
     }
 
     function onMouseMove(event) {
