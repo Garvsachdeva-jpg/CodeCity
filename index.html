@@ -251,6 +251,17 @@
                         statusMsg.style.color = '#00ff88';
                         window.currentSnapshot = result.snapshot;
                         window.allData = result.data;
+                        // Persist last-known snapshot and repo for reliable GitHub links
+                        try {
+                            if (result.snapshot && result.snapshot.id) {
+                                localStorage.setItem('codecity_last_snapshot_id', result.snapshot.id);
+                            }
+                            if (result.snapshot && result.snapshot.repo_url) {
+                                localStorage.setItem('codecity_last_repo_url', result.snapshot.repo_url);
+                            }
+                        } catch (e) {
+                            console.warn('Could not persist last snapshot info', e);
+                        }
                         createOrUpdateCity();
                         await loadSnapshots();
                     } else {
@@ -298,6 +309,7 @@
     let currentFilter = 'all';
     let searchTerm = '';
     let currentSnapshotId = null;
+    let cachedSnapshots = [];
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
@@ -322,6 +334,7 @@
                 return;
             }
             const snapshots = await res.json();
+            cachedSnapshots = snapshots;
             listEl.innerHTML = '';
             if (!snapshots.length) {
                 emptyEl.style.display = 'block';
@@ -344,8 +357,11 @@
                 div.addEventListener('click', () => handleSnapshotClick(snap.id));
                 listEl.appendChild(div);
             });
+
+            return snapshots;
         } catch (e) {
             console.warn('Failed to load snapshots', e);
+            return [];
         }
     }
 
@@ -402,14 +418,36 @@
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
 
-        // Load initial data from backend if available
+        // Prefer loading the latest snapshot so we have snapshot metadata (repo_url)
+        let snapshots = [];
         try {
-            const response = await fetch('/api/data');
-            if (response.ok) {
-                allData = await response.json();
-            }
+            snapshots = await loadSnapshots();
         } catch (e) {
-            console.warn('Error fetching initial data', e);
+            console.warn('Error loading snapshots at startup', e);
+        }
+
+        // Restore last selected snapshot if available, otherwise load newest
+        let desiredSnapshotId = null;
+        try {
+            desiredSnapshotId = localStorage.getItem('codecity_last_snapshot_id');
+        } catch (e) {
+            desiredSnapshotId = null;
+        }
+        if (!desiredSnapshotId && snapshots && snapshots.length) {
+            desiredSnapshotId = snapshots[0].id; // newest first from backend
+        }
+        if (desiredSnapshotId) {
+            await loadSnapshot(desiredSnapshotId);
+        } else {
+            // Fallback to current data endpoint (no snapshot meta)
+            try {
+                const response = await fetch('/api/data');
+                if (response.ok) {
+                    allData = await response.json();
+                }
+            } catch (e) {
+                console.warn('Error fetching initial data', e);
+            }
         }
 
         // Layout & grid
@@ -492,7 +530,7 @@
         }
         animate();
 
-        await loadSnapshots();
+        // Snapshots already loaded above (and on demand after new analyses)
     }
 
     function createBuildings(font) {
@@ -619,9 +657,17 @@
         
         // Handle both snapshot structures (from analysis vs. from loading)
         const snapshotInfo = window.currentSnapshot ? (window.currentSnapshot.meta || window.currentSnapshot) : null;
+        let repoUrl = snapshotInfo && snapshotInfo.repo_url ? snapshotInfo.repo_url : null;
+        if (!repoUrl) {
+            try {
+                repoUrl = localStorage.getItem('codecity_last_repo_url');
+            } catch (e) {
+                repoUrl = null;
+            }
+        }
 
-        if (snapshotInfo && snapshotInfo.repo_url) {
-            const baseUrl = snapshotInfo.repo_url.replace('.git', '');
+        if (repoUrl) {
+            const baseUrl = repoUrl.replace('.git', '');
             const fileUrl = `${baseUrl}/blob/main/${data.name}`; // Assuming 'main' branch
             githubButton = `<a href="${fileUrl}" target="_blank" class="github-button">View on GitHub</a>`;
         }
