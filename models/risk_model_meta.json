@@ -1,0 +1,12 @@
+{
+  "feature_cols": [
+    "size",
+    "complexity",
+    "width",
+    "depth",
+    "height",
+    "is_test_file",
+    "area",
+    "aspect_ratio"
+  ]
+}

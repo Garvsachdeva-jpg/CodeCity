@@ -43,7 +43,8 @@ canvas {
 .legend {
     position: absolute;
     top: 10px;
-    left: 10px;
+    /* Avoid overlap with Saved Analyses panel (≈260px wide + padding) */
+    left: 290px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
     padding: 15px;
@@ -52,6 +53,7 @@ canvas {
     pointer-events: auto;
     border: 1px solid #444;
     z-index: 100;
+    max-width: 320px;
 }
 
 .legend h3 {
@@ -83,6 +85,15 @@ canvas {
 
 .critical-complexity {
     color: #ff4444;
+}
+
+@media (max-width: 1000px) {
+    /* On smaller screens, move legend away from top panels */
+    .legend {
+        top: auto;
+        bottom: 10px;
+        left: 10px;
+    }
 }
 
 /* Repository Panel */
