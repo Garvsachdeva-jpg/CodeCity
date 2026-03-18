@@ -14,6 +14,9 @@ data engineering, data science, and ML engineering skills for DS/ML roles.
 - Serves models in the Flask app to attach `risk_score` and `anomaly_score`
   to each file in every new snapshot.
 - Visualizes overall project stats and ML scores in a 3D dashboard.
+Future work – live visualization:
+Add near‑real‑time updates by periodically re‑analyzing the latest commit and smoothly updating the 3D city.”
+“Experiment with WebSockets and GitHub webhooks to push updates to the visualization as new commits land on main.”
 
 ### Running the app
 

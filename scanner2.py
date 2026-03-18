@@ -25,6 +25,9 @@ GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', None)
 MAX_FILES = 2000
 MAX_WORKERS = 20
 
+# Global repo root used for git-based churn analysis
+REPO_ROOT = None
+
 def get_github_repo_info(url):
     """Parse GitHub URL to owner/repo."""
     url = url.rstrip('/')
@@ -86,7 +89,7 @@ def get_source_files_from_local(local_repo_path, max_files=MAX_FILES):
     return source_files
 
 def analyze_file(file_info):
-    """Read file content from local path and analyze it with lizard."""
+    """Read file content from local path and analyze it with lizard and git churn."""
     try:
         with open(file_info['local_path'], 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -101,11 +104,36 @@ def analyze_file(file_info):
         analysis = lizard.analyze_file(file_info['local_path'])
         complexity = sum(f.cyclomatic_complexity for f in analysis.function_list) or 1
 
+        # Compute simple churn: number of commits touching this file
+        churn = 0
+        try:
+            if REPO_ROOT:
+                # Use repo-root-relative POSIX-style path so git can resolve it
+                rel_path = file_info.get('path')
+                if not rel_path:
+                    rel_path = os.path.relpath(file_info['local_path'], REPO_ROOT)
+                rel_path_git = rel_path.replace(os.sep, '/')
+
+                result = subprocess.run(
+                    ['git', 'log', '--pretty=format:%H', '--', rel_path_git],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode == 0:
+                    churn = len([line for line in result.stdout.splitlines() if line.strip()])
+                else:
+                    print(f"[DEBUG] git log failed for {rel_path_git}: {result.stderr}", flush=True)
+        except Exception as e:
+            print(f"[DEBUG] Error computing churn for {file_info.get('path')}: {e}", flush=True)
+            churn = 0
+
         return {
             "name": file_info['name'],
             "size": max(1, len(lines)),
             "complexity": complexity,
-            "churn": 1,  # Placeholder
+            "churn": churn,
         }
     except Exception as e:
         print(f"[DEBUG] Error analyzing {file_info['name']}: {e}", flush=True)
@@ -123,6 +151,9 @@ def build_city_from_github(repo_url):
     local_repo_path = None
     try:
         local_repo_path = clone_repository(repo_url, GITHUB_TOKEN)
+        # Expose repo root for churn analysis
+        global REPO_ROOT
+        REPO_ROOT = local_repo_path
         print("[PRO] Fetching source files from local repository...", flush=True)
         files = get_source_files_from_local(local_repo_path)
         print(f"[PRO] Found {len(files)} source files to analyze.", flush=True)
@@ -179,6 +210,7 @@ def build_city_from_github(repo_url):
                 "h": height,
                 "color": color,
                 "size": file_data['size'],
+                "churn": file_data.get('churn', 0),
             })
 
         with open('city_data2.json', 'w') as f:

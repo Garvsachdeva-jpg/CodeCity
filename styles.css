@@ -76,11 +76,13 @@ canvas {
 }
 
 .medium-complexity {
-    color: #ffff00;
+    /* Match complex building color from scanner2.py */
+    color: #FFC300;
 }
 
 .high-complexity {
-    color: #ff9900;
+    /* Match very complex building color from scanner2.py */
+    color: #ff8800;
 }
 
 .critical-complexity {

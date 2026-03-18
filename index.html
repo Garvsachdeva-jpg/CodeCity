@@ -15,7 +15,7 @@
             background: rgba(0, 0, 0, 0.9);
             color: #fff;
             padding: 12px 16px;
-            border-radius: 80px;
+            border-radius: 8px;
             border: 1px solid #444;
             z-index: 100;
             width: 260px;
@@ -87,6 +87,11 @@
         <h3>Saved Analyses</h3>
         <div id="snapshot-list-empty" class="snapshot-meta">No snapshots yet. Run an analysis to create one.</div>
         <div id="snapshot-list"></div>
+        <div id="snapshot-timeline-container" class="snapshot-meta" style="margin-top: 8px; display: none;">
+            <div style="margin-bottom: 4px;">Time slider:</div>
+            <input type="range" id="snapshot-slider" min="0" max="0" value="0" style="width: 100%;">
+            <div id="snapshot-slider-label" style="margin-top: 2px; font-size: 10px; color: #aaa;"></div>
+        </div>
         <div class="snapshot-actions">
             <button id="compare-btn" class="compare-button">Compare Snapshots</button>
             <button id="cancel-compare-btn" class="cancel-button" style="display: none;">Cancel Comparison</button>
@@ -249,8 +254,7 @@
                         const result = await response.json();
                         statusMsg.textContent = '✅ Analysis complete. Snapshot saved.';
                         statusMsg.style.color = '#00ff88';
-                        window.currentSnapshot = result.snapshot;
-                        window.allData = result.data;
+
                         // Persist last-known snapshot and repo for reliable GitHub links
                         try {
                             if (result.snapshot && result.snapshot.id) {
@@ -262,8 +266,12 @@
                         } catch (e) {
                             console.warn('Could not persist last snapshot info', e);
                         }
-                        createOrUpdateCity();
+
+                        // Immediately load the new snapshot so buildings appear
                         await loadSnapshots();
+                        if (result.snapshot && result.snapshot.id) {
+                            await loadSnapshot(result.snapshot.id);
+                        }
                     } else {
                         let errorMsg = `${response.status}: ${response.statusText}`; // Default error
                         try {
@@ -310,6 +318,7 @@
     let searchTerm = '';
     let currentSnapshotId = null;
     let cachedSnapshots = [];
+    let snapshotTimeline = []; // snapshots ordered oldest -> newest
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
@@ -327,6 +336,10 @@
         try {
             const listEl = document.getElementById('snapshot-list');
             const emptyEl = document.getElementById('snapshot-list-empty');
+            const sliderContainer = document.getElementById('snapshot-timeline-container');
+            const slider = document.getElementById('snapshot-slider');
+            const sliderLabel = document.getElementById('snapshot-slider-label');
+
             const res = await fetch('/api/snapshots');
             if (!res.ok) {
                 console.error("Failed to load snapshots:", res.status, await res.text());
@@ -335,9 +348,11 @@
             }
             const snapshots = await res.json();
             cachedSnapshots = snapshots;
+            snapshotTimeline = [...snapshots].slice().reverse(); // oldest -> newest
             listEl.innerHTML = '';
             if (!snapshots.length) {
                 emptyEl.style.display = 'block';
+                if (sliderContainer) sliderContainer.display = 'none';
                 return;
             }
             emptyEl.style.display = 'none';
@@ -357,6 +372,44 @@
                 div.addEventListener('click', () => handleSnapshotClick(snap.id));
                 listEl.appendChild(div);
             });
+
+            // Configure time slider if we have at least 2 snapshots
+            if (sliderContainer && slider && sliderLabel) {
+                if (snapshotTimeline.length > 1) {
+                    sliderContainer.style.display = 'block';
+                    slider.min = 0;
+                    slider.max = snapshotTimeline.length - 1;
+
+                    // Default to newest snapshot in timeline
+                    let currentIndex = snapshotTimeline.length - 1;
+                    if (currentSnapshotId) {
+                        const foundIndex = snapshotTimeline.findIndex(s => s.id === currentSnapshotId);
+                        if (foundIndex !== -1) {
+                            currentIndex = foundIndex;
+                        }
+                    }
+                    slider.value = currentIndex;
+
+                    const snap = snapshotTimeline[currentIndex];
+                    sliderLabel.textContent = `${snap.created_at} • ${snap.label || getRepoName(snap.repo_url)}`;
+
+                    slider.oninput = (e) => {
+                        const idx = parseInt(e.target.value, 10);
+                        const s = snapshotTimeline[idx];
+                        if (!s) return;
+                        sliderLabel.textContent = `${s.created_at} • ${s.label || getRepoName(s.repo_url)}`;
+                    };
+
+                    slider.onchange = async (e) => {
+                        const idx = parseInt(e.target.value, 10);
+                        const s = snapshotTimeline[idx];
+                        if (!s) return;
+                        await loadSnapshot(s.id);
+                    };
+                } else {
+                    sliderContainer.style.display = 'none';
+                }
+            }
 
             return snapshots;
         } catch (e) {
@@ -552,6 +605,8 @@
         });
         cityCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
 
+        const maxChurn = allData.reduce((max, f) => Math.max(max, f.churn || 0), 0);
+
         allData.forEach((file, index) => {
             const shouldShow = passesFilter(file);
             const spacing = 0.92;
@@ -577,7 +632,13 @@
             scene.add(building);
 
             const edgeGeometry = new THREE.EdgesGeometry(geometry);
-            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
+            // Edge color encodes git churn: more red = more frequently changed
+            let edgeColor = new THREE.Color(0x222222);
+            if (maxChurn > 0 && (file.churn || 0) > 0) {
+                const t = Math.min(1, (file.churn || 0) / maxChurn);
+                edgeColor = new THREE.Color(0x222222).lerp(new THREE.Color(0xff0000), t);
+            }
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: edgeColor });
             const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
             edges.position.copy(building.position);
             edges.userData = { isEdge: true, parentIndex: index };
@@ -674,12 +735,13 @@
         const html = `
             <div style="color: #fff;">
                 <strong style="color: ${data.color}">${data.name}</strong>
-                <div style="margin-top: 12px; font-size: 12px;">
+            <div style="margin-top: 12px; font-size: 12px;">
                     <div>📊 Complexity: <strong>${complexity.toFixed(1)}</strong></div>
                     <div>📝 Lines of Code: <strong>${linesOfCode}</strong></div>
                     <div>📦 Width: <strong>${data.w.toFixed(1)}m</strong></div>
                     <div>📏 Depth: <strong>${data.d.toFixed(1)}m</strong></div>
                     <div>📈 Height: <strong>${data.h.toFixed(1)}m</strong></div>
+                    <div>🔁 Churn (commits): <strong>${(data.churn || 0)}</strong></div>
                     <div>⚠️ Risk Score: <strong>${riskScore}</strong></div>
                     <div>🧪 Anomaly Score: <strong>${anomalyScore}</strong></div>
                     <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;">
