@@ -67,6 +67,36 @@ canvas {
     margin: 5px 0;
 }
 
+/* Snapshot comparison legend (same footprint as complexity legend when visible) */
+.diff-legend {
+    position: absolute;
+    top: 10px;
+    left: 290px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 15px;
+    font-family: sans-serif;
+    border-radius: 8px;
+    pointer-events: auto;
+    border: 1px solid #444;
+    z-index: 100;
+    max-width: 320px;
+}
+
+.diff-legend h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+@media (max-width: 1000px) {
+    .diff-legend {
+        top: auto;
+        bottom: 10px;
+        left: 10px;
+    }
+}
+
 .low-complexity {
     color: #00ffcc;
 }
@@ -440,4 +470,47 @@ canvas {
 .github-button:hover {
     background: #3c4146;
     border-color: #666;
+}
+
+/* Risk insights (Pro) — floating panel, matches other widgets */
+.risk-panel {
+    position: absolute;
+    top: 240px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #444;
+    z-index: 100;
+    pointer-events: auto;
+    max-width: 420px;
+    max-height: 45vh;
+    overflow: auto;
+}
+
+.risk-panel h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 14px;
+    border-bottom: 1px solid #555;
+    padding-bottom: 8px;
+}
+
+.risk-table {
+    width: 100%;
+    font-size: 11px;
+    border-collapse: collapse;
+}
+
+.risk-table th,
+.risk-table td {
+    padding: 4px 6px;
+    text-align: left;
+    border-bottom: 1px solid #333;
+}
+
+.risk-table th {
+    color: #00ffcc;
+    font-weight: 600;
 }

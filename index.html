@@ -79,6 +79,29 @@
         .snapshot-label-input::placeholder {
             color: #666;
         }
+
+        /* Draggable widgets: drag from title bar (collapse buttons still click normally) */
+        .snapshot-panel > h3,
+        .repo-panel > h3,
+        .legend > h3,
+        .diff-legend > h3,
+        .stats-panel > h3,
+        .search-panel > h3,
+        .sidebar > h3,
+        .risk-panel > h3 {
+            user-select: none;
+            cursor: grab;
+        }
+        .snapshot-panel > h3:active,
+        .repo-panel > h3:active,
+        .legend > h3:active,
+        .diff-legend > h3:active,
+        .stats-panel > h3:active,
+        .search-panel > h3:active,
+        .sidebar > h3:active,
+        .risk-panel > h3:active {
+            cursor: grabbing;
+        }
     </style>
 </head>
 <body>
@@ -306,7 +329,84 @@
                 }
             });
         });
+
+        initDraggableWidgets();
     });
+
+    const DRAGGABLE_WIDGET_SELECTOR = '.snapshot-panel, .repo-panel, .legend, .diff-legend, .stats-panel, .search-panel, .sidebar, .risk-panel';
+
+    function initDraggableWidgets() {
+        const DRAG_THRESHOLD_PX = 5;
+        document.querySelectorAll(DRAGGABLE_WIDGET_SELECTOR).forEach((panel) => {
+            const header = panel.querySelector(':scope > h3');
+            if (!header) return;
+
+            header.addEventListener('mousedown', (down) => {
+                if (down.button !== 0) return;
+                if (down.target.closest('button')) return;
+
+                let dragging = false;
+                const startX = down.clientX;
+                const startY = down.clientY;
+
+                const rect = panel.getBoundingClientRect();
+                const offsetX = down.clientX - rect.left;
+                const offsetY = down.clientY - rect.top;
+
+                const bumpZIndex = () => {
+                    let maxZ = 100;
+                    document.querySelectorAll(DRAGGABLE_WIDGET_SELECTOR).forEach((el) => {
+                        const z = parseInt(getComputedStyle(el).zIndex, 10);
+                        if (!Number.isNaN(z)) maxZ = Math.max(maxZ, z);
+                    });
+                    panel.style.zIndex = String(maxZ + 1);
+                };
+
+                const onMove = (move) => {
+                    if (!dragging) {
+                        if (Math.abs(move.clientX - startX) < DRAG_THRESHOLD_PX &&
+                            Math.abs(move.clientY - startY) < DRAG_THRESHOLD_PX) {
+                            return;
+                        }
+                        dragging = true;
+                        panel.style.position = 'absolute';
+                        panel.style.left = `${rect.left}px`;
+                        panel.style.top = `${rect.top}px`;
+                        panel.style.right = 'auto';
+                        panel.style.bottom = 'auto';
+                        panel.style.transform = 'none';
+                        bumpZIndex();
+                        header.style.cursor = 'grabbing';
+                    }
+                    move.preventDefault();
+                    let nx = move.clientX - offsetX;
+                    let ny = move.clientY - offsetY;
+                    const w = panel.offsetWidth;
+                    const h = panel.offsetHeight;
+                    nx = Math.max(0, Math.min(nx, window.innerWidth - w));
+                    ny = Math.max(0, Math.min(ny, window.innerHeight - h));
+                    panel.style.left = `${nx}px`;
+                    panel.style.top = `${ny}px`;
+                };
+
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    header.style.cursor = 'grab';
+                    if (dragging) {
+                        const swallowClick = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        };
+                        header.addEventListener('click', swallowClick, { capture: true, once: true });
+                    }
+                };
+
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        });
+    }
     </script>
 
     <!-- Main 3D city logic -->
@@ -352,7 +452,7 @@
             listEl.innerHTML = '';
             if (!snapshots.length) {
                 emptyEl.style.display = 'block';
-                if (sliderContainer) sliderContainer.display = 'none';
+                if (sliderContainer) sliderContainer.style.display = 'none';
                 return;
             }
             emptyEl.style.display = 'none';
