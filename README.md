@@ -3,6 +3,7 @@
 CodeCity Pro scans a GitHub repository, turns it into a 3D city, and now also adds
 data-driven risk and anomaly scores per file. It is designed to showcase end-to-end
 data engineering, data science, and ML engineering skills for DS/ML roles.
+This project is now live at:https://codecity-wmqi.onrender.com/
 
 ### What it does
 
