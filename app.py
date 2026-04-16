@@ -1,8 +1,13 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, redirect, session, url_for
 import json
 import os
 import sys
 from datetime import datetime
+import secrets
+import urllib.parse
+
+import requests
+from dotenv import load_dotenv
 
 from src import scan_pipeline
 
@@ -11,7 +16,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
+# Load local .env file if present
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 app = Flask(__name__, static_folder='.', static_url_path='')
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+GITHUB_CLIENT_ID = (os.environ.get("GITHUB_CLIENT_ID") or "").strip()
+GITHUB_CLIENT_SECRET = (os.environ.get("GITHUB_CLIENT_SECRET") or "").strip()
+GITHUB_OAUTH_SCOPES = (os.environ.get("GITHUB_OAUTH_SCOPES") or "read:user repo").strip()
+REDIRECT_URI = (os.environ.get("REDIRECT_URI") or "").strip()
+
+
+def _is_logged_in() -> bool:
+    return bool(session.get("github_user") and session.get("github_access_token"))
+
+
+def _login_required():
+    if not _is_logged_in():
+        return jsonify({"error": "GitHub login required"}), 401
+    return None
 
 
 @app.route('/health', methods=['GET'])
@@ -24,6 +48,112 @@ def health():
 def index():
     """Serve the Pro UI."""
     return send_file('index.html')
+
+
+@app.route("/login")
+def login():
+    """
+    Start GitHub OAuth flow.
+
+    Requires env vars:
+      - GITHUB_CLIENT_ID
+      - GITHUB_CLIENT_SECRET
+    """
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        return (
+            "GitHub OAuth is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET.",
+            500,
+        )
+
+    state = secrets.token_urlsafe(32)
+    session["oauth_state"] = state
+
+    # Prefer explicit REDIRECT_URI from environment (must match GitHub app)
+    redirect_uri = REDIRECT_URI or url_for("oauth_callback", _external=True)
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "scope": GITHUB_OAUTH_SCOPES,
+        "state": state,
+        "allow_signup": "true",
+    }
+    authorize_url = "https://github.com/login/oauth/authorize?" + urllib.parse.urlencode(
+        params
+    )
+    return redirect(authorize_url)
+
+
+@app.route("/oauth/callback")
+def oauth_callback():
+    """GitHub OAuth callback handler."""
+    error = request.args.get("error")
+    if error:
+        desc = request.args.get("error_description") or error
+        return f"GitHub OAuth error: {desc}", 400
+
+    code = request.args.get("code")
+    state = request.args.get("state")
+    expected_state = session.get("oauth_state")
+    session.pop("oauth_state", None)
+
+    if not code or not state or not expected_state or state != expected_state:
+        return "Invalid OAuth state. Please try logging in again.", 400
+
+    # Compute redirect_uri used in the flow (must match GitHub app)
+    redirect_uri = REDIRECT_URI or url_for("oauth_callback", _external=True)
+
+    token_res = requests.post(
+        "https://github.com/login/oauth/access_token",
+        headers={"Accept": "application/json"},
+        data={
+            "client_id": GITHUB_CLIENT_ID,
+            "client_secret":GITHUB_CLIENT_SECRET,
+            "code": code,
+            # Include redirect_uri if we supplied one when starting the flow
+            **({"redirect_uri": redirect_uri} if redirect_uri else {}),
+        },
+        timeout=30,
+    )
+    token_res.raise_for_status()
+    token_payload = token_res.json()
+    access_token = token_payload.get("access_token")
+    if not access_token:
+        return "Failed to get GitHub access token.", 400
+
+    user_res = requests.get(
+        "https://api.github.com/user",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {access_token}",
+        },
+        timeout=30,
+    )
+    user_res.raise_for_status()
+    user = user_res.json()
+
+    session["github_access_token"] = access_token
+    session["github_user"] = {
+        "id": user.get("id"),
+        "login": user.get("login"),
+        "name": user.get("name"),
+        "avatar_url": user.get("avatar_url"),
+    }
+
+    return redirect("/")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+
+@app.route("/api/me", methods=["GET"])
+def me():
+    """Return current login status for the UI."""
+    if not _is_logged_in():
+        return jsonify({"authenticated": False}), 200
+    return jsonify({"authenticated": True, "user": session.get("github_user")}), 200
 
 
 
@@ -43,8 +173,13 @@ def analyze():
     repo_url = (data.get('repo_url') or '').strip()
     label = (data.get('label') or '').strip()
     
-    # Prioritize token from request, fall back to environment variable
-    github_token = (data.get('github_token') or os.environ.get('GITHUB_TOKEN') or '').strip()
+    # Prioritize token from request, fall back to session token, then environment variable
+    session_token = session.get("github_access_token") if _is_logged_in() else ""
+    github_token = (
+        (data.get("github_token") or "")
+        or (session_token or "")
+        or (os.environ.get("GITHUB_TOKEN") or "")
+    ).strip()
 
     if not repo_url:
         return jsonify({'error': 'Repository URL is required'}), 400
@@ -109,6 +244,9 @@ def get_current_data():
 @app.route('/api/snapshots', methods=['GET'])
 def list_snapshots():
     """Return metadata for all saved snapshots."""
+    guard = _login_required()
+    if guard:
+        return guard
     snapshots = []
     for name in sorted(os.listdir(SNAPSHOT_DIR)):
         if not name.endswith('.json'):
@@ -129,6 +267,9 @@ def list_snapshots():
 @app.route('/api/snapshots/<snapshot_id>', methods=['GET'])
 def get_snapshot(snapshot_id):
     """Return data for a single snapshot."""
+    guard = _login_required()
+    if guard:
+        return guard
     path = os.path.join(SNAPSHOT_DIR, f"{snapshot_id}.json")
     if not os.path.exists(path):
         return jsonify({'error': 'Snapshot not found'}), 404
@@ -143,6 +284,9 @@ def get_snapshot_risk(snapshot_id):
     Return files and their risk/anomaly scores for a snapshot,
     sorted by risk descending.
     """
+    guard = _login_required()
+    if guard:
+        return guard
     path = os.path.join(SNAPSHOT_DIR, f"{snapshot_id}.json")
     if not os.path.exists(path):
         return jsonify({'error': 'Snapshot not found'}), 404
@@ -162,9 +306,83 @@ def get_snapshot_risk(snapshot_id):
     return jsonify(enriched)
 
 
+@app.route('/api/my_repos', methods=['GET'])
+def my_repos():
+    """Return the authenticated user's repositories (public + private).
+
+    Requires the user to be logged in and that the OAuth token has the
+    `repo` scope to access private repositories. Results are paginated
+    transparently and returned as a simplified list.
+    """
+    guard = _login_required()
+    if guard:
+        return guard
+
+    access_token = session.get('github_access_token')
+    if not access_token:
+        return jsonify({'error': 'GitHub access token missing'}), 401
+
+    headers = {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': f'Bearer {access_token}',
+    }
+
+    url = 'https://api.github.com/user/repos'
+    params = {'per_page': 100, 'type': 'all', 'sort': 'updated'}
+    repos = []
+
+    try:
+        while True:
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp.raise_for_status()
+            page = resp.json() or []
+            repos.extend(page)
+
+            link = resp.headers.get('Link', '')
+            if 'rel="next"' in link:
+                import re
+                m = re.search(r'<([^>]+)>;\s*rel="next"', link)
+                if m:
+                    url = m.group(1)
+                    params = None
+                    continue
+            break
+    except requests.HTTPError as e:
+        return jsonify({'error': 'Failed to fetch repos', 'detail': str(e)}), 502
+    except Exception as e:
+        return jsonify({'error': 'Unexpected error', 'detail': str(e)}), 500
+
+    # Simplify the payload we return to the UI
+    simplified = []
+    for r in repos:
+        simplified.append({
+            'id': r.get('id'),
+            'name': r.get('name'),
+            'full_name': r.get('full_name'),
+            'private': r.get('private'),
+            'html_url': r.get('html_url'),
+            'description': r.get('description'),
+            'language': r.get('language'),
+            'updated_at': r.get('updated_at'),
+            'stargazers_count': r.get('stargazers_count'),
+            'forks_count': r.get('forks_count'),
+            'owner': {
+                'login': r.get('owner', {}).get('login'),
+                'id': r.get('owner', {}).get('id'),
+            },
+        })
+
+    # Sort by updated_at desc to show most recent first
+    simplified.sort(key=lambda x: x.get('updated_at') or '', reverse=True)
+    return jsonify(simplified)
+
+
 @app.route('/api/diff', methods=['GET'])
 def diff_snapshots():
     """Compare two snapshots and return the delta."""
+    guard = _login_required()
+    if guard:
+        return guard
     snap1_id = request.args.get('snap1')
     snap2_id = request.args.get('snap2')
 

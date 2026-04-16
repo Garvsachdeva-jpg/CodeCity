@@ -124,6 +124,23 @@
     <!-- Repository Input Panel -->
     <div class="repo-panel">
         <h3>🏙️ Code City Pro</h3>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+            <div id="auth-badge" style="font-size:11px; color:#aaa;">
+                Not logged in
+            </div>
+            <div style="display:flex; gap:8px;">
+                <a id="login-link" href="/login" class="github-button" style="text-decoration:none; display:none;">Login with GitHub</a>
+                <a id="logout-link" href="/logout" class="github-button" style="text-decoration:none; display:none;">Logout</a>
+            </div>
+        </div>
+            <div id="my-repos-controls" style="margin-top:8px; display:none;">
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="my-repos-btn" class="analyze-button" style="margin-bottom:6px;">📁 My Repositories</button>
+                    <button id="analyze-all-btn" class="analyze-button" style="margin-bottom:6px;">🚀 Analyze All</button>
+                </div>
+                <div id="my-repos-list" style="max-height:28vh; overflow-y:auto; font-size:12px; color:#ddd; border:1px solid #222; padding:8px; border-radius:6px; background:#0f0f0f; display:none;"></div>
+                <div id="analyze-all-progress" style="margin-top:8px; display:none; color:#ddd; font-size:12px;"></div>
+            </div>
         <div class="repo-input-group">
             <input type="text" id="repo-input" placeholder="GitHub URL (e.g., https://github.com/user/repo)" class="repo-input">
             <button id="analyze-btn" class="analyze-button">📊 Analyze</button>
@@ -251,6 +268,206 @@
         const analyzeBtn = document.getElementById('analyze-btn');
         const repoInput = document.getElementById('repo-input');
         const labelInput = document.getElementById('snapshot-label');
+        const snapshotPanel = document.querySelector('.snapshot-panel');
+        const compareBtn = document.getElementById('compare-btn');
+        const cancelCompareBtn = document.getElementById('cancel-compare-btn');
+        const authBadge = document.getElementById('auth-badge');
+        const loginLink = document.getElementById('login-link');
+        const logoutLink = document.getElementById('logout-link');
+        const sliderContainer = document.getElementById('snapshot-timeline-container');
+
+        let isAuthenticated = false;
+        async function refreshAuth() {
+            try {
+                const res = await fetch('/api/me');
+                const payload = await res.json();
+                isAuthenticated = !!payload.authenticated;
+                if (isAuthenticated) {
+                    const u = payload.user || {};
+                    const who = u.login || u.name || 'GitHub user';
+                    authBadge.textContent = `Logged in as ${who}`;
+                    authBadge.style.color = '#00ff88';
+                    if (loginLink) loginLink.style.display = 'none';
+                    if (logoutLink) logoutLink.style.display = 'inline-block';
+                    if (snapshotPanel) snapshotPanel.style.display = 'block';
+                    // Show my repos controls and load repos
+                    const myReposControls = document.getElementById('my-repos-controls');
+                    const myReposList = document.getElementById('my-repos-list');
+                    if (myReposControls) myReposControls.style.display = 'block';
+                    if (myReposList) myReposList.style.display = 'none';
+                    if (document.getElementById('my-repos-btn')) {
+                        document.getElementById('my-repos-btn').addEventListener('click', fetchMyRepos);
+                    }
+                    if (document.getElementById('analyze-all-btn')) {
+                        document.getElementById('analyze-all-btn').addEventListener('click', analyzeAllRepos);
+                    }
+                } else {
+                    authBadge.textContent = 'Not logged in';
+                    authBadge.style.color = '#aaa';
+                    if (loginLink) loginLink.style.display = 'inline-block';
+                    if (logoutLink) logoutLink.style.display = 'none';
+                    // Hide snapshot UI; analyzing remains available
+                    if (snapshotPanel) snapshotPanel.style.display = 'none';
+                    if (sliderContainer) sliderContainer.style.display = 'none';
+                    if (compareBtn) compareBtn.disabled = true;
+                    if (cancelCompareBtn) cancelCompareBtn.disabled = true;
+                }
+            } catch (e) {
+                // If auth check fails, default to not authenticated.
+                isAuthenticated = false;
+                if (authBadge) {
+                    authBadge.textContent = 'Not logged in';
+                    authBadge.style.color = '#aaa';
+                }
+                if (loginLink) loginLink.style.display = 'inline-block';
+                if (logoutLink) logoutLink.style.display = 'none';
+                if (snapshotPanel) snapshotPanel.style.display = 'none';
+                if (sliderContainer) sliderContainer.style.display = 'none';
+            }
+        }
+
+        async function fetchMyRepos() {
+            const listEl = document.getElementById('my-repos-list');
+            const btn = document.getElementById('my-repos-btn');
+            const progressEl = document.getElementById('analyze-all-progress');
+            if (!listEl) return;
+
+            // Toggle: if currently visible, hide and reset label
+            if (listEl.style.display === 'block') {
+                listEl.style.display = 'none';
+                if (progressEl) progressEl.style.display = 'none';
+                if (btn) btn.textContent = '📁 My Repositories';
+                return;
+            }
+
+            // Otherwise show and load
+            listEl.style.display = 'block';
+            if (btn) btn.textContent = '📁 My Repositories ▲';
+            listEl.innerHTML = '⏳ Loading repositories...';
+            try {
+                const res = await fetch('/api/my_repos');
+                if (!res.ok) {
+                    if (res.status === 401) {
+                        listEl.innerHTML = '<div style="color:#ffcc66;">Login required to view repositories.</div>';
+                        return;
+                    }
+                    const text = await res.text();
+                    listEl.innerHTML = `<div style="color:#ff6666;">Error loading repos: ${res.status}</div>`;
+                    console.error('Repo fetch failed', res.status, text);
+                    return;
+                }
+                const repos = await res.json();
+                if (!Array.isArray(repos) || !repos.length) {
+                    listEl.innerHTML = '<div style="color:#999">No repositories found.</div>';
+                    return;
+                }
+                // Render a simple list
+                const html = repos.map(r => {
+                    const priv = r.private ? '🔒' : '🔓';
+                    const desc = r.description ? `<div style="color:#aaa; font-size:11px; margin-top:4px">${escapeHtml(r.description)}</div>` : '';
+                    return `
+                        <div style="padding:8px; border-bottom:1px solid #111;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                                <div>
+                                    <a href="${r.html_url}" target="_blank" style="color:#00ffcc; font-weight:600; text-decoration:none;">${escapeHtml(r.full_name)}</a>
+                                    <div style="color:#888; font-size:11px;">${r.language || ''} • ⭐ ${r.stargazers_count || 0} • Forks ${r.forks_count || 0}</div>
+                                </div>
+                                <div style="font-size:12px; color:#bbb">${priv}</div>
+                            </div>
+                            ${desc}
+                        </div>
+                    `;
+                }).join('');
+                listEl.innerHTML = html;
+                if (btn) btn.textContent = '📁 My Repositories ▼';
+            } catch (e) {
+                console.error('Failed to load repos', e);
+                listEl.innerHTML = `<div style="color:#ff6666;">Error: ${escapeHtml(e.message || String(e))}</div>`;
+                if (btn) btn.textContent = '📁 My Repositories';
+            }
+        }
+
+        let _analyzeAllRunning = false;
+        async function analyzeAllRepos() {
+            if (_analyzeAllRunning) return;
+            _analyzeAllRunning = true;
+            const progressEl = document.getElementById('analyze-all-progress');
+            const listEl = document.getElementById('my-repos-list');
+            if (!progressEl) return;
+            progressEl.style.display = 'block';
+            progressEl.innerHTML = 'Preparing...';
+
+            // Ensure we have the repos loaded
+            if (!listEl || listEl.style.display === 'none' || !listEl.innerHTML.trim()) {
+                await fetchMyRepos();
+            }
+
+            // Load repos from backend (fresh)
+            let repos = [];
+            try {
+                const res = await fetch('/api/my_repos');
+                if (!res.ok) {
+                    progressEl.innerHTML = `<div style="color:#ff6666">Failed to list repos: ${res.status}</div>`;
+                    _analyzeAllRunning = false;
+                    return;
+                }
+                repos = await res.json();
+            } catch (e) {
+                progressEl.innerHTML = `<div style="color:#ff6666">Error listing repos: ${escapeHtml(e.message || String(e))}</div>`;
+                _analyzeAllRunning = false;
+                return;
+            }
+
+            if (!Array.isArray(repos) || repos.length === 0) {
+                progressEl.innerHTML = '<div style="color:#999">No repositories to analyze.</div>';
+                _analyzeAllRunning = false;
+                return;
+            }
+
+            // Batch analyze sequentially (keeps server/GitHub friendly). Show progress and errors.
+            const total = repos.length;
+            let done = 0;
+            let success = 0;
+            let failed = 0;
+            progressEl.innerHTML = `Starting analysis for ${total} repositories...`;
+
+            for (const r of repos) {
+                const label = r.full_name || r.name || r.html_url;
+                progressEl.innerHTML = `Analyzing (${done}/${total}) — ${escapeHtml(label)}...`;
+                try {
+                    const resp = await fetch('/api/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ repo_url: r.html_url, label })
+                    });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        console.warn('Analyze failed for', r.full_name, resp.status, text);
+                        failed += 1;
+                    } else {
+                        success += 1;
+                    }
+                } catch (e) {
+                    console.error('Analyze error', e);
+                    failed += 1;
+                }
+                done += 1;
+                // small delay to avoid spikes
+                await new Promise(resolve => setTimeout(resolve, 700));
+            }
+
+            progressEl.innerHTML = `<div>Completed: ${done}/${total} — Success: ${success} • Failed: ${failed}</div>`;
+            // Refresh snapshots if authenticated so new buildings appear
+            try { await loadSnapshots(); } catch (e) { /* ignore */ }
+            _analyzeAllRunning = false;
+        }
+
+        function escapeHtml(s) {
+            if (!s) return '';
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+            });
+        }
 
         if (analyzeBtn && repoInput && statusMsg) {
             analyzeBtn.addEventListener('click', async () => {
@@ -290,10 +507,32 @@
                             console.warn('Could not persist last snapshot info', e);
                         }
 
-                        // Immediately load the new snapshot so buildings appear
-                        await loadSnapshots();
-                        if (result.snapshot && result.snapshot.id) {
-                            await loadSnapshot(result.snapshot.id);
+                        // If logged in, refresh snapshots + load the new snapshot
+                        if (isAuthenticated) {
+                            await loadSnapshots();
+                            if (result.snapshot && result.snapshot.id) {
+                                await loadSnapshot(result.snapshot.id);
+                            }
+                        } else {
+                            // For anonymous users, immediately display the returned analysis
+                            try {
+                                if (result && result.data) {
+                                    // Create a transient snapshot in-memory so the 3D city can render
+                                    window.currentSnapshot = {
+                                        meta: result.snapshot || { id: `transient-${Date.now()}`, created_at: new Date().toISOString(), label: 'Transient Analysis' },
+                                        data: result.data,
+                                    };
+                                    currentSnapshotId = window.currentSnapshot.meta.id;
+                                    allData = result.data;
+                                    // Update UI to indicate transient view
+                                    statusMsg.textContent = '🔎 Showing transient analysis (not saved to your account).';
+                                    statusMsg.style.color = '#00ccff';
+                                    // Render the city from the analysis result
+                                    try { await createOrUpdateCity(); } catch (e) { console.warn('Could not render transient city', e); }
+                                }
+                            } catch (e) {
+                                console.warn('Failed to render transient analysis', e);
+                            }
                         }
                     } else {
                         let errorMsg = `${response.status}: ${response.statusText}`; // Default error
@@ -329,6 +568,17 @@
                 }
             });
         });
+
+        // Initial auth + snapshot bootstrapping.
+        (async () => {
+            await refreshAuth();
+            if (isAuthenticated) {
+                // Enable snapshot comparison controls
+                if (compareBtn) compareBtn.disabled = false;
+                if (cancelCompareBtn) cancelCompareBtn.disabled = false;
+                await loadSnapshots();
+            }
+        })();
 
         initDraggableWidgets();
     });
@@ -369,11 +619,16 @@
                             return;
                         }
                         dragging = true;
+                        // Lock the panel's size so it doesn't reflow/expand while dragging
+                        panel.style.width = `${rect.width}px`;
+                        panel.style.height = `${rect.height}px`;
+                        panel.style.boxSizing = 'border-box';
                         panel.style.position = 'absolute';
                         panel.style.left = `${rect.left}px`;
                         panel.style.top = `${rect.top}px`;
                         panel.style.right = 'auto';
                         panel.style.bottom = 'auto';
+                        // Remove transform only after fixing width to avoid layout jumps
                         panel.style.transform = 'none';
                         bumpZIndex();
                         header.style.cursor = 'grabbing';
@@ -442,6 +697,12 @@
 
             const res = await fetch('/api/snapshots');
             if (!res.ok) {
+                if (res.status === 401) {
+                    listEl.innerHTML = '<div class="snapshot-meta" style="color: #ffff00;">Login with GitHub to access saved analyses.</div>';
+                    if (emptyEl) emptyEl.style.display = 'none';
+                    if (sliderContainer) sliderContainer.style.display = 'none';
+                    return;
+                }
                 console.error("Failed to load snapshots:", res.status, await res.text());
                 listEl.innerHTML = '<div class="snapshot-meta" style="color: #ff4444;">Error loading snapshots.</div>';
                 return;
